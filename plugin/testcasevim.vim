@@ -1,1 +1,1 @@
-lua require('testcasevim').run()
+lua require('testcasevim')
