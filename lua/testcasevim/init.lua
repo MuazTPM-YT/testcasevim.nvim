@@ -2,8 +2,9 @@ local M = {}
 
 local config = {
 	compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG "%s" -o "%s"',
-	width = 0.5,
-	height = 0.5,
+	width = 0.75,
+	height = 0.7,
+	gap = 2,
 }
 
 local state = {
@@ -23,11 +24,11 @@ local function close_windows()
 	state.input_buf, state.output_buf, state.input_win, state.output_win = nil, nil, nil, nil
 end
 
-local function create_float_window(title, left_side, total_width, height, row, col)
+local function create_float_window(title, left, total_width, height, row, col)
 	local buf = vim.api.nvim_create_buf(false, true)
 	local opts = {
 		relative = "editor",
-		width = total_width / 2,
+		width = total_width,
 		height = height,
 		row = row,
 		col = col,
@@ -51,19 +52,21 @@ function M.run()
 	vim.cmd("write")
 	close_windows()
 
-	local editor_width = vim.o.columns
-	local editor_height = vim.o.lines
-	local float_width = math.floor(editor_width * config.width)
-	if float_width % 2 == 1 then
-		float_width = float_width - 1
+	local editor_cols = vim.o.columns
+	local editor_lines = vim.o.lines
+	local win_total_width = math.floor(editor_cols * config.width)
+	if win_total_width % 2 == 1 then
+		win_total_width = win_total_width - 1
 	end
-	local float_height = math.floor(editor_height * config.height)
-	local row = math.floor((editor_height - float_height) / 2)
-	local col_left = math.floor((editor_width - float_width) / 2)
-	local col_right = col_left + float_width / 2
 
-	state.input_buf, state.input_win = create_float_window("Input", true, float_width, float_height, row, col_left)
-	state.output_buf, state.output_win = create_float_window("Output", false, float_width, float_height, row, col_right)
+	local single_width = (win_total_width - config.gap) / 2
+	local height = math.floor(editor_lines * config.height)
+	local row = math.floor((editor_lines - height) / 2)
+	local col_left = math.floor((editor_cols - win_total_width) / 2)
+	local col_right = col_left + single_width + config.gap
+
+	state.input_buf, state.input_win = create_float_window("Input", true, single_width, height, row, col_left)
+	state.output_buf, state.output_win = create_float_window("Output", false, single_width, height, row, col_right)
 
 	vim.api.nvim_buf_set_lines(state.input_buf, 0, -1, false, {})
 	vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, {})
