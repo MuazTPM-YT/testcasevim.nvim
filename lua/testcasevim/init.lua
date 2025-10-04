@@ -2,8 +2,8 @@ local M = {}
 
 local config = {
 	compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG "%s" -o "%s"',
-	width = 0.7,
-	height = 0.7,
+	width = 0.5,
+	height = 0.5,
 }
 
 local state = {
@@ -38,13 +38,10 @@ local function create_float_window(title, left_side, total_width, height, row, c
 		noautocmd = true,
 	}
 	local win = vim.api.nvim_open_win(buf, false, opts)
-	vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-	vim.api.nvim_buf_set_option(buf, "modifiable", true)
 	return buf, win
 end
 
 function M.run()
-	-- Check filetype
 	local current_file = vim.fn.expand("%:p")
 	local file_ext = vim.fn.expand("%:e")
 	if not (file_ext == "cpp" or file_ext == "cxx" or file_ext == "cc") then
@@ -54,33 +51,28 @@ function M.run()
 	vim.cmd("write")
 	close_windows()
 
-	-- Get proper dimensions and spacing
 	local editor_width = vim.o.columns
 	local editor_height = vim.o.lines
 	local float_width = math.floor(editor_width * config.width)
 	if float_width % 2 == 1 then
 		float_width = float_width - 1
-	end -- ensure even for split
+	end
 	local float_height = math.floor(editor_height * config.height)
 	local row = math.floor((editor_height - float_height) / 2)
 	local col_left = math.floor((editor_width - float_width) / 2)
-	local col_right = col_left + float_width // 2
+	local col_right = col_left + float_width / 2
 
-	-- Create truly side-by-side blank windows
 	state.input_buf, state.input_win = create_float_window("Input", true, float_width, float_height, row, col_left)
 	state.output_buf, state.output_win = create_float_window("Output", false, float_width, float_height, row, col_right)
 
-	-- **No prefilled text** at all!
 	vim.api.nvim_buf_set_lines(state.input_buf, 0, -1, false, {})
 	vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, {})
 
 	vim.api.nvim_set_current_win(state.input_win)
 
-	-- q closes both windows
 	vim.keymap.set("n", "q", close_windows, { buffer = state.input_buf, noremap = true, silent = true })
 	vim.keymap.set("n", "q", close_windows, { buffer = state.output_buf, noremap = true, silent = true })
 
-	-- <leader>r compiles and runs
 	vim.keymap.set("n", "<leader>r", function()
 		local input_lines = vim.api.nvim_buf_get_lines(state.input_buf, 0, -1, false)
 		local input_text = table.concat(input_lines, "\n")
