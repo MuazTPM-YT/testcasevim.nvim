@@ -72,15 +72,11 @@ local function compile_and_run(current_file, input_text)
 
 			set_output({ "Running..." })
 
-			vim.fn.jobstart(executable, {
+			-- Run with proper stdin handling
+			local job_id = vim.fn.jobstart(executable, {
 				stdout_buffered = true,
 				stderr_buffered = true,
-				on_stdin = function(_, fd, _)
-					if fd then
-						vim.fn.chansend(fd, input_text .. "\n")
-						vim.fn.chanclose(fd, "stdin")
-					end
-				end,
+				stdin = "pipe", -- Enable stdin pipe
 				on_stdout = function(_, data)
 					if data and #data > 0 then
 						local filtered = {}
@@ -109,6 +105,12 @@ local function compile_and_run(current_file, input_text)
 					end
 				end,
 			})
+
+			-- Send all input at once and close stdin
+			if job_id > 0 then
+				vim.fn.chansend(job_id, input_text)
+				vim.fn.chanclose(job_id, "stdin")
+			end
 		end,
 		on_stderr = function(_, data)
 			if data and #data > 0 and data[1] ~= "" then
