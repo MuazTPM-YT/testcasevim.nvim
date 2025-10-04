@@ -40,35 +40,37 @@ local function create_float(title, width, height, row, col)
 
 	local win = vim.api.nvim_open_win(buf, false, opts)
 
-	vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
-	vim.api.nvim_buf_set_option(buf, "modifiable", true)
-	vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-
 	return buf, win
+end
+
+local function set_output(lines)
+	vim.schedule(function()
+		if state.output_buf and vim.api.nvim_buf_is_valid(state.output_buf) then
+			vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, lines)
+		end
+	end)
 end
 
 local function compile_and_run(current_file, input_text)
 	local executable = "/tmp/" .. vim.fn.fnamemodify(current_file, ":t:r") .. "_testcase"
 	local compile_cmd = string.format(config.compile_cmd, current_file, executable)
 
-	vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, { "Compiling..." })
+	set_output({ "Compiling..." })
 
 	vim.fn.jobstart(compile_cmd, {
 		on_exit = function(_, compile_code)
 			if compile_code ~= 0 then
+				set_output({
+					"=== COMPILATION FAILED ===",
+					"Check your code for errors.",
+				})
 				vim.schedule(function()
-					vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, {
-						"=== COMPILATION FAILED ===",
-						"Check your code for errors.",
-					})
 					vim.notify("Compilation failed!", vim.log.levels.ERROR)
 				end)
 				return
 			end
 
-			vim.schedule(function()
-				vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, { "Running..." })
-			end)
+			set_output({ "Running..." })
 
 			vim.fn.jobstart(executable, {
 				stdout_buffered = true,
@@ -81,25 +83,22 @@ local function compile_and_run(current_file, input_text)
 				end,
 				on_stdout = function(_, data)
 					if data and #data > 0 then
-						vim.schedule(function()
-							-- Filter out empty trailing lines
-							local filtered = {}
-							for _, line in ipairs(data) do
-								if line ~= "" or #filtered > 0 then
-									table.insert(filtered, line)
-								end
+						local filtered = {}
+						for _, line in ipairs(data) do
+							if line ~= "" or #filtered > 0 then
+								table.insert(filtered, line)
 							end
-							vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, filtered)
-						end)
+						end
+						if #filtered > 0 then
+							set_output(filtered)
+						end
 					end
 				end,
 				on_stderr = function(_, data)
 					if data and #data > 0 and data[1] ~= "" then
-						vim.schedule(function()
-							local err = { "=== RUNTIME ERROR ===" }
-							vim.list_extend(err, data)
-							vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, err)
-						end)
+						local err = { "=== RUNTIME ERROR ===" }
+						vim.list_extend(err, data)
+						set_output(err)
 					end
 				end,
 				on_exit = function(_, code)
@@ -113,11 +112,9 @@ local function compile_and_run(current_file, input_text)
 		end,
 		on_stderr = function(_, data)
 			if data and #data > 0 and data[1] ~= "" then
-				vim.schedule(function()
-					local err = { "=== COMPILATION ERROR ===" }
-					vim.list_extend(err, data)
-					vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, err)
-				end)
+				local err = { "=== COMPILATION ERROR ===" }
+				vim.list_extend(err, data)
+				set_output(err)
 			end
 		end,
 	})
@@ -151,20 +148,20 @@ function M.run()
 	state.output_buf, state.output_win = create_float("Output", pane_width, pane_height, start_row, start_col_right)
 
 	vim.api.nvim_buf_set_lines(state.input_buf, 0, -1, false, {})
-	vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, { "Waiting for input..." })
+	set_output({ "Waiting for input...", "", "Press <CR> in normal mode to run" })
 
 	vim.api.nvim_set_current_win(state.input_win)
 
+	-- Close with q
 	vim.keymap.set("n", "q", close_windows, { buffer = state.input_buf, noremap = true, silent = true })
 	vim.keymap.set("n", "q", close_windows, { buffer = state.output_buf, noremap = true, silent = true })
-	vim.keymap.set("i", "<CR>", function()
+
+	-- Run with Enter in normal mode
+	vim.keymap.set("n", "<CR>", function()
 		local input_lines = vim.api.nvim_buf_get_lines(state.input_buf, 0, -1, false)
 		local input_text = table.concat(input_lines, "\n")
-
 		compile_and_run(current_file, input_text)
-
-		return ""
-	end, { buffer = state.input_buf, noremap = true, expr = true })
+	end, { buffer = state.input_buf, noremap = true, silent = true })
 
 	vim.cmd("startinsert")
 end
