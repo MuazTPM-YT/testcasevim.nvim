@@ -149,7 +149,7 @@ local function append_errors(data)
 					state.output_lines,
 					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 				)
-				table.insert(state.output_lines, "⚠️  ERRORS/WARNINGS:")
+				table.insert(state.output_lines, "ERRORS/WARNINGS:")
 				table.insert(
 					state.output_lines,
 					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -241,7 +241,7 @@ local function compile_and_run(current_file, input_text)
 					if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
 						set_output({
 							"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-							"✓ COMPLETED",
+							"COMPLETED",
 							"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
 							"Program executed successfully with no output.",
 						})
@@ -271,7 +271,7 @@ local function compile_and_run(current_file, input_text)
 
 				local err = {
 					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-					"❌ COMPILATION ERROR",
+					"COMPILATION ERROR",
 					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
 				}
 				vim.list_extend(err, data)
