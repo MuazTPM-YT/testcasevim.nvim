@@ -1,10 +1,13 @@
 local M = {}
 
 local config = {
-	compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG "%s" -o "%s"',
+	debug_compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG -DDEBUG "%s" -o "%s"',
+	release_compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG "%s" -o "%s"',
+	compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG -DDEBUG "%s" -o "%s"',
 	width = 0.85,
 	height = 0.8,
 	gap = 4,
+	mode = "debug",
 }
 
 local state = {
@@ -16,6 +19,34 @@ local state = {
 	has_errors = false,
 	has_output = false,
 }
+
+function M.toggle_mode()
+	if config.mode == "debug" then
+		config.mode = "release"
+		config.compile_cmd = config.release_compile_cmd
+		vim.notify("Switched to RELEASE mode (no debug output)", vim.log.levels.INFO)
+	else
+		config.mode = "debug"
+		config.compile_cmd = config.debug_compile_cmd
+		vim.notify("Switched to DEBUG mode (debug output enabled)", vim.log.levels.INFO)
+	end
+end
+
+function M.set_debug()
+	config.mode = "debug"
+	config.compile_cmd = config.debug_compile_cmd
+	vim.notify("Set to DEBUG mode", vim.log.levels.INFO)
+end
+
+function M.set_release()
+	config.mode = "release"
+	config.compile_cmd = config.release_compile_cmd
+	vim.notify("Set to RELEASE mode", vim.log.levels.INFO)
+end
+
+function M.get_mode()
+	return config.mode
+end
 
 local function close_windows()
 	for _, win in ipairs({ state.input_win, state.output_win }) do
@@ -180,7 +211,7 @@ local function compile_and_run(current_file, input_text)
 	state.output_lines = {}
 	state.has_errors = false
 	state.has_output = false
-	set_output({ "Compiling..." })
+	set_output({ "Compiling... [" .. config.mode:upper() .. " MODE]" })
 
 	vim.fn.jobstart(compile_cmd, {
 		on_exit = function(_, compile_code)
@@ -191,7 +222,6 @@ local function compile_and_run(current_file, input_text)
 				return
 			end
 
-			-- Compilation successful, proceed to run
 			state.output_lines = {}
 			state.has_errors = false
 			state.has_output = false
@@ -232,7 +262,10 @@ local function compile_and_run(current_file, input_text)
 		end,
 		on_stderr = function(_, data)
 			if data and #data > 0 and data[1] ~= "" then
-				if #state.output_lines == 1 and state.output_lines[1] == "Compiling..." then
+				if
+					#state.output_lines == 1
+					and (state.output_lines[1] == "Compiling..." or state.output_lines[1]:match("^Compiling%.%.%. %["))
+				then
 					state.output_lines = {}
 				end
 
