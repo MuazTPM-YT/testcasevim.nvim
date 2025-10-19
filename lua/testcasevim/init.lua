@@ -12,6 +12,7 @@ local state = {
 	output_buf = nil,
 	input_win = nil,
 	output_win = nil,
+	output_lines = {},
 }
 
 local function close_windows()
@@ -20,7 +21,7 @@ local function close_windows()
 			pcall(vim.api.nvim_win_close, win, true)
 		end
 	end
-	state = { input_buf = nil, output_buf = nil, input_win = nil, output_win = nil }
+	state = { input_buf = nil, output_buf = nil, input_win = nil, output_win = nil, output_lines = {} }
 end
 
 local function create_float(title, width, height, row, col)
@@ -43,9 +44,21 @@ local function create_float(title, width, height, row, col)
 	return buf, win
 end
 
+local function append_output(lines)
+	vim.schedule(function()
+		if state.output_buf and vim.api.nvim_buf_is_valid(state.output_buf) then
+			for _, line in ipairs(lines) do
+				table.insert(state.output_lines, line)
+			end
+			vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, state.output_lines)
+		end
+	end)
+end
+
 local function set_output(lines)
 	vim.schedule(function()
 		if state.output_buf and vim.api.nvim_buf_is_valid(state.output_buf) then
+			state.output_lines = lines
 			vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, lines)
 		end
 	end)
@@ -55,6 +68,7 @@ local function compile_and_run(current_file, input_text)
 	local executable = "/tmp/" .. vim.fn.fnamemodify(current_file, ":t:r") .. "_testcase"
 	local compile_cmd = string.format(config.compile_cmd, current_file, executable)
 
+	state.output_lines = {}
 	set_output({ "Compiling..." })
 
 	vim.fn.jobstart(compile_cmd, {
@@ -70,13 +84,13 @@ local function compile_and_run(current_file, input_text)
 				return
 			end
 
+			state.output_lines = {}
 			set_output({ "Running..." })
 
-			-- Run with proper stdin handling
 			local job_id = vim.fn.jobstart(executable, {
 				stdout_buffered = true,
 				stderr_buffered = true,
-				stdin = "pipe", -- Enable stdin pipe
+				stdin = "pipe",
 				on_stdout = function(_, data)
 					if data and #data > 0 then
 						local filtered = {}
@@ -86,15 +100,23 @@ local function compile_and_run(current_file, input_text)
 							end
 						end
 						if #filtered > 0 then
-							set_output(filtered)
+							if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
+								state.output_lines = {}
+							end
+							append_output(filtered)
 						end
 					end
 				end,
 				on_stderr = function(_, data)
 					if data and #data > 0 and data[1] ~= "" then
+						-- Clear initial "Running..." message if present
+						if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
+							state.output_lines = {}
+						end
+
 						local err = { "=== RUNTIME ERROR ===" }
 						vim.list_extend(err, data)
-						set_output(err)
+						append_output(err)
 					end
 				end,
 				on_exit = function(_, code)
@@ -106,7 +128,6 @@ local function compile_and_run(current_file, input_text)
 				end,
 			})
 
-			-- Send all input at once and close stdin
 			if job_id > 0 then
 				vim.fn.chansend(job_id, input_text)
 				vim.fn.chanclose(job_id, "stdin")
@@ -154,11 +175,9 @@ function M.run()
 
 	vim.api.nvim_set_current_win(state.input_win)
 
-	-- Close with q
 	vim.keymap.set("n", "q", close_windows, { buffer = state.input_buf, noremap = true, silent = true })
 	vim.keymap.set("n", "q", close_windows, { buffer = state.output_buf, noremap = true, silent = true })
 
-	-- Run with Enter in normal mode
 	vim.keymap.set("n", "<CR>", function()
 		local input_lines = vim.api.nvim_buf_get_lines(state.input_buf, 0, -1, false)
 		local input_text = table.concat(input_lines, "\n")
