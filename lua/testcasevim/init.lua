@@ -108,6 +108,10 @@ local function append_errors(data)
 				state.output_lines = {}
 			end
 
+			if #state.output_lines == 1 and state.output_lines[1] == "Compiling..." then
+				state.output_lines = {}
+			end
+
 			if not state.has_errors then
 				add_separator()
 				table.insert(
@@ -181,18 +185,13 @@ local function compile_and_run(current_file, input_text)
 	vim.fn.jobstart(compile_cmd, {
 		on_exit = function(_, compile_code)
 			if compile_code ~= 0 then
-				set_output({
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-					"❌ COMPILATION FAILED",
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-					"Check your code for errors.",
-				})
 				vim.schedule(function()
 					vim.notify("Compilation failed!", vim.log.levels.ERROR)
 				end)
 				return
 			end
 
+			-- Compilation successful, proceed to run
 			state.output_lines = {}
 			state.has_errors = false
 			state.has_output = false
@@ -209,7 +208,6 @@ local function compile_and_run(current_file, input_text)
 					append_errors(data)
 				end,
 				on_exit = function(_, code)
-					-- If we only have "Running..." and nothing else, show completion message
 					if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
 						set_output({
 							"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -234,6 +232,10 @@ local function compile_and_run(current_file, input_text)
 		end,
 		on_stderr = function(_, data)
 			if data and #data > 0 and data[1] ~= "" then
+				if #state.output_lines == 1 and state.output_lines[1] == "Compiling..." then
+					state.output_lines = {}
+				end
+
 				local err = {
 					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
 					"❌ COMPILATION ERROR",
