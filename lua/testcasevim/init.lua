@@ -1,328 +1,181 @@
+-- testcasevim.nvim — run competitive-programming test cases from Neovim.
+--
+--   <leader><CR>  (user mapping) open the input/output panes
+--   <CR>          compile & run the current test case
+--   q             close the panes
+--
+-- Supported: C++, C, Python and Java.
+local config = require("testcasevim.config")
+local lang = require("testcasevim.lang")
+local ui = require("testcasevim.ui")
+local util = require("testcasevim.util")
+
 local M = {}
 
-local config = {
-	debug_compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG -DDEBUG "%s" -o "%s"',
-	release_compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG "%s" -o "%s"',
-	compile_cmd = 'g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -fsanitize=address,undefined -D_GLIBCXX_DEBUG -DDEBUG "%s" -o "%s"',
-	width = 0.85,
-	height = 0.8,
-	gap = 4,
-	mode = "debug",
-}
+----------------------------------------------------------------------
+-- Mode
+----------------------------------------------------------------------
 
-local state = {
-	input_buf = nil,
-	output_buf = nil,
-	input_win = nil,
-	output_win = nil,
-	output_lines = {},
-	has_errors = false,
-	has_output = false,
-}
-
-function M.toggle_mode()
-	if config.mode == "debug" then
-		config.mode = "release"
-		config.compile_cmd = config.release_compile_cmd
-		vim.notify("Switched to RELEASE mode (no debug output)", vim.log.levels.INFO)
-	else
-		config.mode = "debug"
-		config.compile_cmd = config.debug_compile_cmd
-		vim.notify("Switched to DEBUG mode (debug output enabled)", vim.log.levels.INFO)
+local function set_mode(mode, quiet)
+	config.get().mode = mode
+	ui.refresh_chrome()
+	if not quiet then
+		if mode == "debug" then
+			util.notify("DEBUG mode — sanitizers on, -DDEBUG defined")
+		else
+			util.notify("RELEASE mode — optimised, no debug output")
+		end
 	end
+	return mode
 end
 
 function M.set_debug()
-	config.mode = "debug"
-	config.compile_cmd = config.debug_compile_cmd
-	vim.notify("Set to DEBUG mode", vim.log.levels.INFO)
+	return set_mode("debug")
 end
 
 function M.set_release()
-	config.mode = "release"
-	config.compile_cmd = config.release_compile_cmd
-	vim.notify("Set to RELEASE mode", vim.log.levels.INFO)
+	return set_mode("release")
+end
+
+function M.toggle_mode()
+	return set_mode(config.get().mode == "debug" and "release" or "debug")
 end
 
 function M.get_mode()
-	return config.mode
+	return config.get().mode
 end
 
-local function close_windows()
-	for _, win in ipairs({ state.input_win, state.output_win }) do
-		if win and vim.api.nvim_win_is_valid(win) then
-			pcall(vim.api.nvim_win_close, win, true)
-		end
+----------------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------------
+
+local function is_plugin_buffer(buf)
+	local state = ui.state
+	return buf == state.input_buf or buf == state.output_buf
+end
+
+--- Persist the source buffer before compiling, so the run matches what is
+--- on screen. Never throws: an unwritable buffer just runs from disk.
+local function write_source(file)
+	local buf = vim.fn.bufnr(file)
+	if buf <= 0 or not vim.api.nvim_buf_is_valid(buf) then
+		return
 	end
-	state = {
-		input_buf = nil,
-		output_buf = nil,
-		input_win = nil,
-		output_win = nil,
-		output_lines = {},
-		has_errors = false,
-		has_output = false,
-	}
-end
-
-local function create_float(title, width, height, row, col)
-	local buf = vim.api.nvim_create_buf(false, true)
-
-	vim.bo[buf].modifiable = true
-	vim.bo[buf].buftype = "nofile"
-
-	local opts = {
-		relative = "editor",
-		width = width,
-		height = height,
-		row = row,
-		col = col,
-		style = "minimal",
-		border = "rounded",
-		title = title,
-		title_pos = "center",
-	}
-
-	local win = vim.api.nvim_open_win(buf, false, opts)
-
-	vim.wo[win].wrap = true
-	vim.wo[win].linebreak = true
-
-	return buf, win
-end
-
-local function auto_scroll()
-	vim.schedule(function()
-		if state.output_win and vim.api.nvim_win_is_valid(state.output_win) then
-			local current_win = vim.api.nvim_get_current_win()
-			pcall(vim.api.nvim_set_current_win, state.output_win)
-			vim.cmd("normal! G")
-			pcall(vim.api.nvim_set_current_win, current_win)
-		end
+	if not vim.bo[buf].modified or vim.bo[buf].buftype ~= "" or not vim.bo[buf].modifiable then
+		return
+	end
+	pcall(vim.api.nvim_buf_call, buf, function()
+		vim.cmd("silent! write")
 	end)
 end
 
-local function update_display()
-	vim.schedule(function()
-		if state.output_buf and vim.api.nvim_buf_is_valid(state.output_buf) then
-			vim.api.nvim_buf_set_lines(state.output_buf, 0, -1, false, state.output_lines)
-			auto_scroll()
-		end
-	end)
-end
-
-local function set_output(lines)
-	state.output_lines = lines
-	state.has_errors = false
-	state.has_output = false
-	update_display()
-end
-
-local function add_separator()
-	if #state.output_lines > 0 and state.output_lines[#state.output_lines] ~= "" then
-		table.insert(state.output_lines, "")
+--- First lines of the source, used to work out the Java class name.
+local function source_lines(file)
+	local buf = vim.fn.bufnr(file)
+	if buf > 0 and vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf) then
+		return vim.api.nvim_buf_get_lines(buf, 0, 60, false)
 	end
+	local ok, lines = pcall(vim.fn.readfile, file, "", 60)
+	return ok and lines or {}
 end
 
-local function append_errors(data)
-	if data and #data > 0 then
-		local has_content = false
-		for _, line in ipairs(data) do
-			if line ~= "" then
-				has_content = true
-				break
-			end
-		end
+----------------------------------------------------------------------
+-- Public API
+----------------------------------------------------------------------
 
-		if has_content then
-			if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
-				state.output_lines = {}
-			end
-
-			if #state.output_lines == 1 and state.output_lines[1] == "Compiling..." then
-				state.output_lines = {}
-			end
-
-			if not state.has_errors then
-				add_separator()
-				table.insert(
-					state.output_lines,
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-				)
-				table.insert(state.output_lines, "ERRORS/WARNINGS:")
-				table.insert(
-					state.output_lines,
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-				)
-				state.has_errors = true
-			end
-
-			for _, line in ipairs(data) do
-				table.insert(state.output_lines, line)
-			end
-
-			update_display()
-		end
-	end
-end
-
-local function append_output(data)
-	if data and #data > 0 then
-		local has_content = false
-		for _, line in ipairs(data) do
-			if line ~= "" then
-				has_content = true
-				break
-			end
-		end
-
-		if has_content then
-			if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
-				state.output_lines = {}
-			end
-
-			if state.has_errors and not state.has_output then
-				add_separator()
-				table.insert(
-					state.output_lines,
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-				)
-				table.insert(state.output_lines, "✓ OUTPUT:")
-				table.insert(
-					state.output_lines,
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-				)
-				state.has_output = true
-			end
-
-			for _, line in ipairs(data) do
-				table.insert(state.output_lines, line)
-			end
-
-			update_display()
-		end
-	end
-end
-
-local function compile_and_run(current_file, input_text)
-	local executable = "/tmp/" .. vim.fn.fnamemodify(current_file, ":t:r") .. "_testcase"
-	local compile_cmd = string.format(config.compile_cmd, current_file, executable)
-
-	state.output_lines = {}
-	state.has_errors = false
-	state.has_output = false
-	set_output({ "Compiling... [" .. config.mode:upper() .. " MODE]" })
-
-	vim.fn.jobstart(compile_cmd, {
-		on_exit = function(_, compile_code)
-			if compile_code ~= 0 then
-				vim.schedule(function()
-					vim.notify("Compilation failed!", vim.log.levels.ERROR)
-				end)
-				return
-			end
-
-			state.output_lines = {}
-			state.has_errors = false
-			state.has_output = false
-			set_output({ "Running..." })
-
-			local job_id = vim.fn.jobstart(executable, {
-				stdout_buffered = true,
-				stderr_buffered = true,
-				stdin = "pipe",
-				on_stdout = function(_, data)
-					append_output(data)
-				end,
-				on_stderr = function(_, data)
-					append_errors(data)
-				end,
-				on_exit = function(_, code)
-					if #state.output_lines == 1 and state.output_lines[1] == "Running..." then
-						set_output({
-							"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-							"COMPLETED",
-							"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-							"Program executed successfully with no output.",
-						})
-					end
-
-					if code ~= 0 then
-						vim.schedule(function()
-							vim.notify(string.format("Program exited with code %d", code), vim.log.levels.WARN)
-						end)
-					end
-				end,
-			})
-
-			if job_id > 0 then
-				vim.fn.chansend(job_id, input_text)
-				vim.fn.chanclose(job_id, "stdin")
-			end
-		end,
-		on_stderr = function(_, data)
-			if data and #data > 0 and data[1] ~= "" then
-				if
-					#state.output_lines == 1
-					and (state.output_lines[1] == "Compiling..." or state.output_lines[1]:match("^Compiling%.%.%. %["))
-				then
-					state.output_lines = {}
-				end
-
-				local err = {
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-					"COMPILATION ERROR",
-					"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-				}
-				vim.list_extend(err, data)
-				set_output(err)
-			end
-		end,
-	})
-end
-
+--- Open (or focus) the test-case panes for the current file.
 function M.run()
-	local current_file = vim.fn.expand("%:p")
-	local file_ext = vim.fn.expand("%:e")
-
-	if not (file_ext == "cpp" or file_ext == "cc" or file_ext == "cxx") then
-		vim.notify("Not a C++ file!", vim.log.levels.ERROR)
+	if is_plugin_buffer(vim.api.nvim_get_current_buf()) then
+		if ui.win_valid(ui.state.input_win) then
+			vim.api.nvim_set_current_win(ui.state.input_win)
+		end
 		return
 	end
 
-	vim.cmd("write")
-	close_windows()
-
-	local editor_width = vim.o.columns
-	local editor_height = vim.o.lines
-	local total_width = math.floor(editor_width * config.width)
-	if total_width % 2 == 1 then
-		total_width = total_width - 1
+	local file = vim.fn.expand("%:p")
+	if file == "" or vim.bo.buftype ~= "" then
+		util.notify("Open a source file first.", vim.log.levels.ERROR)
+		return
 	end
-	local pane_width = math.floor((total_width - config.gap) / 2)
-	local pane_height = math.floor(editor_height * config.height)
-	local start_row = math.floor((editor_height - pane_height) / 2)
-	local start_col_left = math.floor((editor_width - total_width) / 2)
-	local start_col_right = start_col_left + pane_width + config.gap
 
-	state.input_buf, state.input_win = create_float("Input", pane_width, pane_height, start_row, start_col_left)
-	state.output_buf, state.output_win = create_float("Output", pane_width, pane_height, start_row, start_col_right)
+	local key, spec = lang.detect(file, vim.bo.filetype)
+	if not key then
+		util.notify(
+			string.format(
+				"%s is not supported.\nSupported: %s",
+				vim.fn.fnamemodify(file, ":t"),
+				lang.supported_summary()
+			),
+			vim.log.levels.ERROR
+		)
+		return
+	end
 
-	vim.api.nvim_buf_set_lines(state.input_buf, 0, -1, false, {})
-	set_output({ "Waiting for input...", "", "Press <CR> in normal mode to run" })
+	write_source(file)
+	ui.open(file, key, spec)
+end
 
-	vim.api.nvim_set_current_win(state.input_win)
+--- Compile and run the test case currently in the input pane.
+function M.execute()
+	local state = ui.state
+	if not ui.is_open() then
+		M.run()
+		if not ui.is_open() then
+			return
+		end
+		state = ui.state
+	end
 
-	vim.keymap.set("n", "q", close_windows, { buffer = state.input_buf, noremap = true, silent = true })
-	vim.keymap.set("n", "q", close_windows, { buffer = state.output_buf, noremap = true, silent = true })
+	local file = state.file
+	local key, spec = state.lang_key, state.spec
+	if not file or not spec then
+		return
+	end
 
-	vim.keymap.set("n", "<CR>", function()
-		local input_lines = vim.api.nvim_buf_get_lines(state.input_buf, 0, -1, false)
-		local input_text = table.concat(input_lines, "\n")
-		compile_and_run(current_file, input_text)
-	end, { buffer = state.input_buf, noremap = true, silent = true })
+	if vim.fn.filereadable(file) ~= 1 then
+		state.out = ui.new_output()
+		state.out.status.error = "the source file no longer exists:\n" .. file
+		state.phase = "done"
+		ui.render(true)
+		return
+	end
 
-	vim.cmd("startinsert")
+	write_source(file)
+
+	local input_lines = ui.current_input()
+	ui.save_input(file, input_lines)
+
+	require("testcasevim.runner").execute({
+		file = file,
+		basename = state.basename,
+		lang_key = key,
+		spec = spec,
+		mode = config.get().mode,
+		input = table.concat(input_lines, "\n"),
+		source_lines = source_lines(file),
+	})
+end
+
+--- Stop a running program without closing the panes.
+function M.stop()
+	if not require("testcasevim.runner").stop() then
+		util.notify("Nothing is running.", vim.log.levels.WARN)
+	end
+end
+
+--- Close the panes (and kill anything still running).
+function M.close()
+	ui.close()
+end
+
+function M.is_open()
+	return ui.is_open()
+end
+
+function M.setup(opts)
+	config.setup(opts)
+	ui.setup_highlights()
+	return M
 end
 
 return M
