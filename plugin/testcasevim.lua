@@ -10,7 +10,7 @@ end
 
 cmd("Testcase", function()
 	require("testcasevim").run()
-end, "Open the test-case panes for the current file")
+end, "Open / close the test-case panes for the current file")
 
 cmd("TestcaseRun", function()
 	require("testcasevim").execute()

@@ -155,12 +155,12 @@ local function render_hint(c)
 	c:add("")
 	local keys = {
 		{ "<CR>", "compile & run" },
-		{ "q", "close" },
 		{ "<Tab>", "switch pane" },
 		{ "<C-c>", "stop running program" },
+		{ "<leader><CR>", "close (toggle)" },
 	}
 	for _, item in ipairs(keys) do
-		local key = string.format("%s%-8s", INDENT, item[1])
+		local key = string.format("%s%-14s", INDENT, item[1])
 		local text = key .. icons.arrow .. " " .. item[2]
 		local row = c:add(text)
 		c:mark(row, #INDENT, #INDENT + #item[1], "TestcaseVimKey")
@@ -936,10 +936,9 @@ local function setup_keymaps()
 		require("testcasevim").execute()
 	end
 
-	-- Unchanged from previous versions: <CR> runs, q closes.
+	-- Only <CR>, <Tab> and <C-c> are taken, so the panes keep the user's own
+	-- normal/insert mappings. Close with the toggle mapping or `:q`.
 	map(state.input_buf, "n", "<CR>", run, "compile & run")
-	map(state.input_buf, "n", "q", M.close, "close")
-	map(state.output_buf, "n", "q", M.close, "close")
 
 	map(state.output_buf, "n", "<CR>", function()
 		if not jump_to_location() then
@@ -947,12 +946,21 @@ local function setup_keymaps()
 		end
 	end, "jump to error / re-run")
 
+	local runner = require("testcasevim.runner")
 	for _, buf in ipairs({ state.input_buf, state.output_buf }) do
 		map(buf, "n", "<Tab>", focus_other, "switch pane")
 		map(buf, "n", "<S-Tab>", focus_other, "switch pane")
-		map(buf, "n", "<C-c>", function()
+		map(buf, { "n", "x" }, "<C-c>", function()
 			require("testcasevim").stop()
 		end, "stop running program")
+		-- Insert mode: stop a run if there is one, else keep <C-c>'s usual meaning.
+		vim.keymap.set("i", "<C-c>", function()
+			if runner.is_busy() then
+				vim.schedule(runner.stop) -- expr mappings run under textlock
+				return ""
+			end
+			return "<C-c>"
+		end, { buffer = buf, expr = true, silent = true, desc = "testcasevim: stop running program" })
 	end
 end
 

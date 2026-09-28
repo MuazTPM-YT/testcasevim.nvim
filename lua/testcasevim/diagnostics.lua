@@ -52,9 +52,9 @@ function M.parse_compiler(lines)
 		elseif current and (line:match("^%s*%d*%s*|") or line:match("^%s+[%^~|]") or line:match("^%s%s+%S")) then
 			current.context[#current.context + 1] = line
 		elseif line:match("^%S.*:%s+In .+:$") or line:match("^%S.*:%s+At global scope:$") then
-			-- "main.cpp: In function 'int main()':" — scope banner.
+			-- "main.cpp: In function 'int main()':" — scope banner. Every
+			-- diagnostic already carries its line, so the banner is noise.
 			current = nil
-			leftovers[#leftovers + 1] = line
 		elseif line:match("^%d+ errors?$") or line:match("^%d+ warnings?$") then
 			-- javac's own tally; the section header already shows it.
 			current = nil

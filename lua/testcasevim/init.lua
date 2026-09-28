@@ -1,8 +1,8 @@
 -- testcasevim.nvim — run competitive-programming test cases from Neovim.
 --
---   <leader><CR>  (user mapping) open the input/output panes
+--   <leader><CR>  (user mapping) open / close the input/output panes
 --   <CR>          compile & run the current test case
---   q             close the panes
+--   <C-c>         stop the running program
 --
 -- Supported: C++, C, Python and Java.
 local config = require("testcasevim.config")
@@ -83,8 +83,8 @@ end
 -- Public API
 ----------------------------------------------------------------------
 
---- Open (or focus) the test-case panes for the current file.
-function M.run()
+--- Open the test-case panes for the current file (or focus them).
+function M.open()
 	if is_plugin_buffer(vim.api.nvim_get_current_buf()) then
 		if ui.win_valid(ui.state.input_win) then
 			vim.api.nvim_set_current_win(ui.state.input_win)
@@ -115,11 +115,22 @@ function M.run()
 	ui.open(file, key, spec)
 end
 
+--- Toggle the panes: close them when open, open them otherwise.
+function M.run()
+	if ui.is_open() then
+		ui.close()
+	else
+		M.open()
+	end
+end
+
+M.toggle = M.run
+
 --- Compile and run the test case currently in the input pane.
 function M.execute()
 	local state = ui.state
 	if not ui.is_open() then
-		M.run()
+		M.open()
 		if not ui.is_open() then
 			return
 		end

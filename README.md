@@ -68,16 +68,18 @@ vim.keymap.set("n", "<C-Right>", '<Cmd>lua require("testcasevim").set_release()<
 
 | Key | Where | Action |
 | --- | --- | --- |
-| `<leader><CR>` | any source file | open the panes (your mapping) |
+| `<leader><CR>` | anywhere | open / close the panes (your mapping) |
 | `<CR>` | input pane | compile & run |
 | `<CR>` | output pane | jump to the error under the cursor, else re-run |
-| `q` | either pane | close |
 | `<Tab>` | either pane | switch pane |
-| `<C-c>` | either pane | stop the running program |
+| `<C-c>` | either pane (normal, visual or insert) | stop the running program |
+
+Nothing else is mapped, so your own normal/insert mode keys work in the
+panes exactly as in any other buffer. `:q` in either pane closes both.
 
 ## Commands
 
-`:Testcase`, `:TestcaseRun`, `:TestcaseStop`, `:TestcaseClose`,
+`:Testcase` (toggle), `:TestcaseRun`, `:TestcaseStop`, `:TestcaseClose`,
 `:TestcaseDebug`, `:TestcaseRelease`, `:TestcaseToggleMode`.
 
 ## Debug mode
